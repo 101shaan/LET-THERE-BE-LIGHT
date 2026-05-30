@@ -5,6 +5,10 @@ use rand::Rng;
 
 pub trait Material: Send + Sync {
     fn scatter(&self, ray_in: &Ray, rec: &HitRecord) -> Option<(Ray, Color)>;
+    
+    fn emitted (&self) -> Color {
+        Color::zero()
+    }
 }
 
 // ── Lambertian (ideal diffuse) ────────────────────────────────────────────────
@@ -112,5 +116,22 @@ impl Material for Dielectric {
         };
 
         Some((Ray::new(rec.point, direction), attenuation))
+    }
+}
+
+pub struct DiffuseLight {
+    pub emit: Color,
+}
+impl DiffuseLight {
+    pub fn new(emit: Color) -> Self { Self { emit} }
+}
+
+impl Material for DiffuseLight {
+    fn scatter(&self, _ray_in: &Ray, _rec: &HitRecord) -> Option<(Ray, Color)> {
+        None    // light sources don't scatter
+    }
+
+    fn emitted(&self) -> Color {
+        self.emit
     }
 }

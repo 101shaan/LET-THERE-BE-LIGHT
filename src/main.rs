@@ -4,35 +4,32 @@ mod camera;
 mod hittable;
 mod sphere;
 mod material;
+mod quad;
+
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
+
 use::rayon::prelude::*;
 use rand::Rng;
+
 use vec3::{Vec3, Color};
 use ray::Ray;
 use camera::Camera;
 use hittable::{Hittable, HittableList};
-use material::{Lambertian, Metal, Dielectric};
+use material::{Material, Lambertian, Metal, Dielectric, DiffuseLight};
 use sphere::Sphere;
+use quad::Quad;
 
 use crate::vec3::Point3;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ASPECT_RATIO:      f64 = 16.0 / 9.0;
-const IMAGE_WIDTH:       u32 = 800;
-const IMAGE_HEIGHT:      u32 = (IMAGE_WIDTH as f64 / ASPECT_RATIO) as u32;
-const SAMPLES_PER_PIXEL: u32 = 100;   // AA samples — raise for cleaner image
+const ASPECT_RATIO:      f64 = 1.0;
+const IMAGE_WIDTH:       u32 = 600;
+const IMAGE_HEIGHT:      u32 = 600;
+const SAMPLES_PER_PIXEL: u32 = 600;   //raise for cleaner image
 const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
-
-// ── Sky background ────────────────────────────────────────────────────────────
-
-fn sky_color(ray: &Ray) -> Color {
-    let unit_dir = ray.direction.normalize();
-    let t = 0.5 * (unit_dir.y + 1.0);
-    (1.0 - t) * Color::one() + t * Color::new(0.5, 0.7, 1.0)
-}
 
 // ── Ray colour ────────────────────────────────────────────────────────────────
 // hits → surface normal visualised as RGB (usual thingy debug view).
@@ -40,75 +37,147 @@ fn sky_color(ray: &Ray) -> Color {
 
 fn ray_color(ray: &Ray, world: &HittableList) -> Color {
     let mut current_ray  = *ray;
+    let mut accumulated = Color::zero();
     let mut attenuation  = Color::one();
 
     for _ in 0..MAX_DEPTH {
         if let Some(rec) = world.hit(&current_ray, 0.001, f64::INFINITY) {
-            if let Some((scattered, albedo)) = rec.material.scatter(&current_ray, &rec) {
+            accumulated = accumulated + attenuation * rec.material.emitted();
+
+            if let Some((scattered, albedo)) = rec.material.scatter(&current_ray, &rec){
                 attenuation = attenuation * albedo;
                 current_ray = scattered;
             } else {
-                // Material absorbed the ray (shouldn't happen with our three
-                // materials but correct behaviour is to return black).
-                return Color::zero();
+                break;
             }
         } else {
-            // Ray escaped to sky — multiply accumulated attenuation by sky colour.
-            return attenuation * sky_color(&current_ray);
+            break;
         }
     }
 
-    // Exceeded MAX_DEPTH — treat as fully absorbed.
-    Color::zero()
+    accumulated
 }
 
-fn build_scene() -> HittableList {
+// ── Cornell 🙃 ─────────────────────────────────────────────────────────
+fn build_cornell_box() -> HittableList {
     let mut world = HittableList::new();
 
-    let mat_ground  = Arc::new(Lambertian::new(Color::new(0.8, 0.8, 0.0)));
-    let mat_centre  = Arc::new(Lambertian::new(Color::new(0.1, 0.2, 0.5)));
-    let mat_left    = Arc::new(Dielectric::new(1.50));          // glass
-    let mat_bubble  = Arc::new(Dielectric::new(1.0 / 1.50));   // hollow — inverted IR
-    let mat_right   = Arc::new(Metal::new(Color::new(0.8, 0.6, 0.2), 0.0));
+    // ── Materials ─────────────────────────────────────────────────────────────
+    let red: Arc<dyn Material>    = Arc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
+    let green: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
+    let white: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+    let light: Arc<dyn Material>  = Arc::new(DiffuseLight::new(Color::new(15.0, 15.0, 15.0)));
+    let mirror: Arc<dyn Material> = Arc::new(Metal::new(Color::new(0.8, 0.85, 0.9), 0.0));
+    let glass: Arc<dyn Material>  = Arc::new(Dielectric::new(1.5));
 
-    world.add(Sphere::new(Point3::new( 0.0, -100.5, -1.0), 100.0, mat_ground));
-    world.add(Sphere::new(Point3::new( 0.0,    0.0, -1.2),   0.5, mat_centre));
-    world.add(Sphere::new(Point3::new(-1.0,    0.0, -1.0),   0.5, mat_left));
-    // Negative radius flips the normals — classic hollow-glass-bubble trick
-    world.add(Sphere::new(Point3::new(-1.0,    0.0, -1.0),   0.4, mat_bubble));
-    world.add(Sphere::new(Point3::new( 1.0,    0.0, -1.0),   0.5, mat_right));
+    // ── Walls ─────────────────────────────────────────────────────────────────
+    // each Quad: corner point, then two edge vectors
+    // the box spans x∈[0,555], y∈[0,555], z∈[0,555]
+
+    // Left wall (red) — at x=0, facing +X
+    world.add(Quad::new(
+        Point3::new(0.0,   0.0,   0.0),
+        Vec3::new(  0.0, 555.0,   0.0),
+        Vec3::new(  0.0,   0.0, 555.0),
+        Arc::clone(&red),
+    ));
+
+    // Right wall (green) — at x=555, facing -X
+    world.add(Quad::new(
+        Point3::new(555.0, 555.0,   0.0),
+        Vec3::new(    0.0,-555.0,   0.0),
+        Vec3::new(    0.0,   0.0, 555.0),
+        Arc::clone(&green),
+    ));
+
+    // Floor — at y=0, facing +Y
+    world.add(Quad::new(
+        Point3::new(  0.0, 0.0,   0.0),
+        Vec3::new( 555.0, 0.0,   0.0),
+        Vec3::new(   0.0, 0.0, 555.0),
+        Arc::clone(&white),
+    ));
+
+    // Ceiling — at y=555, facing -Y
+    world.add(Quad::new(
+        Point3::new(555.0, 555.0,   0.0),
+        Vec3::new(-555.0,   0.0,   0.0),
+        Vec3::new(   0.0,   0.0, 555.0),
+        Arc::clone(&white),
+    ));
+
+    // Back wall — at z=555, facing -Z
+    world.add(Quad::new(
+        Point3::new(  0.0,   0.0, 555.0),
+        Vec3::new( 555.0,   0.0,   0.0),
+        Vec3::new(   0.0, 555.0,   0.0),
+        Arc::clone(&white),
+    ));
+
+    // Front wall — at z=0, facing +Z (closes the box toward the camera)
+    world.add(Quad::new(
+    Point3::new(555.0, 0.0, 0.0),
+    Vec3::new(-555.0, 0.0, 0.0),
+    Vec3::new(  0.0, 555.0, 0.0),
+    Arc::clone(&white),
+    ));
+
+    // ── Ceiling light ─────────────────────────────────────────────────────────
+    // Centred at x∈[183,373], z∈[127,432] — roughly the classic Cornell proportions.
+    world.add(Quad::new(
+        Point3::new(183.0, 554.0, 127.0),
+        Vec3::new( 190.0,   0.0,   0.0),
+        Vec3::new(   0.0,   0.0, 305.0),
+        Arc::clone(&light),
+    ));
+
+    // ── Spheres ───────────────────────────────────────────────────────────────
+    // Mirror sphere — left side
+    world.add(Sphere::new(
+        Point3::new(165.0, 130.0, 165.0),
+        130.0,
+        Arc::clone(&mirror),
+    ));
+
+    // Glass sphere — right side
+    world.add(Sphere::new(
+        Point3::new(390.0, 100.0, 350.0),
+        100.0,
+        Arc::clone(&glass),
+    ));
 
     world
 }
 
-// this is pretty chill actually
+
 fn main() {
+    // Camera positioned to look straight down the -Z axis into the box.
+    // lookfrom z=1344 is derived from: tan(FOV/2) = 277.5 / (z - 277.5) → FOV=40°
     let camera = Camera::new(
-        Point3::new(-2.0, 2.0, 1.0),   // lookfrom
-        Point3::new( 0.0, 0.0, -1.0),  // lookat
-        Vec3::new(  0.0, 1.0, 0.0),    // vup
-        20.0,                           // vfov — narrow for a nice framing
+        Point3::new(277.5, 277.5, -800.0),  // lookfrom — in front of the open face
+        Point3::new(277.5, 277.5,  555.0),  // lookat   — centre of back wall
+        Vec3::new(  0.0,   1.0,    0.0),    // vup
+        40.0,                                // vfov
         ASPECT_RATIO,
     );
 
-    let world = build_scene();
+    let world = build_cornell_box();
 
-    // ── Parallel render ───────────────────────────────────────────────────────
-    // Collect one Vec<Color> per row, top→bottom.
-    // rayon::par_iter parallelises across all available cores.
-    // Each row gets its own thread_rng — no contention on the RNG.
+    eprintln!(
+        "Rendering {}×{} at {} spp...",
+        IMAGE_WIDTH, IMAGE_HEIGHT, SAMPLES_PER_PIXEL
+    );
 
     let rows: Vec<Vec<Color>> = (0..IMAGE_HEIGHT)
         .into_par_iter()
         .rev()
         .map(|j| {
-            let mut rng = rand::thread_rng();
+            let mut r = rand::thread_rng();
             (0..IMAGE_WIDTH).map(|i| {
                 let mut pixel = Color::zero();
                 for _ in 0..SAMPLES_PER_PIXEL {
-                    // Sub-pixel jitter for anti-aliasing
-                    let u = (i as f64 + rng.gen::<f64>()) / (IMAGE_WIDTH  - 1) as f64;
-                    let v = (j as f64 + rng.gen::<f64>()) / (IMAGE_HEIGHT - 1) as f64;
+                    let u = (i as f64 + r.gen::<f64>()) / (IMAGE_WIDTH  - 1) as f64;
+                    let v = (j as f64 + r.gen::<f64>()) / (IMAGE_HEIGHT - 1) as f64;
                     let ray = camera.get_ray(u, v);
                     pixel += ray_color(&ray, &world);
                 }
@@ -117,7 +186,6 @@ fn main() {
         })
         .collect();
 
-    // ── Write PPM ─────────────────────────────────────────────────────────────
     let file = File::create("output.ppm").expect("Could not create output.ppm");
     let mut out = BufWriter::new(file);
 
