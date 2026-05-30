@@ -99,7 +99,7 @@ impl Mul<Vec3> for f64 {
     }
 }
 
-/// Component-wise multiply — used for colour attenuation
+/// component-wise multiply - for colour attenuation
 impl Mul<Vec3> for Vec3 {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
