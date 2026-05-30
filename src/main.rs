@@ -1,65 +1,83 @@
 mod vec3;
 mod ray;
+mod camera;
+mod hittable;
+mod sphere;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
 use vec3::{Vec3, Color};
 use ray::Ray;
+use camera::Camera;
+use hittable::{Hittable, HittableList};
+use sphere::Sphere;
+
+use crate::vec3::Point3;
 
 // ── Sky background ────────────────────────────────────────────────────────────
-// A simple vertical lerp: white at the bottom, blue at the top.
-// This is our ground-truth output for Step 1 - if the gradient looks right,
-// the math, the ray casting, and the PPM writer all work
 
-fn ray_color(ray: &Ray) -> Color {
+fn sky_color(ray: &Ray) -> Color {
     let unit_dir = ray.direction.normalize();
-    let t = 0.5 * (unit_dir.y + 1.0); // remap [-1,1] → [0,1]
-    let white = Color::new(1.0, 1.0, 1.0);
-    let sky_blue = Color::new(0.5, 0.7, 1.0);
-    (1.0 - t) * white + t * sky_blue
+    let t = 0.5 * (unit_dir.y + 1.0);
+    (1.0 - t) * Color::one() + t * Color::new(0.5, 0.7, 1.0)
 }
+
+// ── Ray colour ────────────────────────────────────────────────────────────────
+// hits → surface normal visualised as RGB (usual thingy debug view).
+// miss  → sky gradient.
+
+fn ray_color(ray: &Ray, world: &HittableList) -> Color {
+    if let Some(rec) = world.hit(ray, 0.001, f64::INFINITY) {
+        // Map normal components [-1,1] → [0,1] for display
+        return 0.5 * (rec.normal + Vec3::one());
+    }
+    sky_color(ray)
+}
+
 // this is pretty chill actually
 fn main() {
     // ── Image dimensions ──────────────────────────────────────────────────────
     const ASPECT_RATIO: f64 = 16.0 / 9.0;
     const IMAGE_WIDTH:  u32 = 400;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f64 / ASPECT_RATIO) as u32;
+    const SAMPLES_PER_PIXEL: u32 = 1;
 
-    // ── Camera / viewport ─────────────────────────────────────────────────────
-    // minimal camera here will be replaced dw
-    let viewport_height = 2.0_f64;
-    let viewport_width  = ASPECT_RATIO * viewport_height;
-    let focal_length    = 1.0_f64;
+    // ── Camera ────────────────────────────────────────────────────────────────
+    let camera = Camera::new(
+        Point3::new(0.0, 0.0, 0.0),   // lookfrom
+        Point3::new(0.0, 0.0, -1.0),  // lookat
+        Vec3::new(0.0, 1.0, 0.0),     // vup
+        90.0,                          // vfov (degrees)
+        ASPECT_RATIO,
+    );
 
-    let origin     = Vec3::zero();
-    let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
-    let vertical   = Vec3::new(0.0, viewport_height, 0.0);
-    // bottom-left corner of the viewport plane
-    let lower_left = origin
-        - horizontal / 2.0
-        - vertical   / 2.0
-        - Vec3::new(0.0, 0.0, focal_length);
+    // ── Scene ─────────────────────────────────────────────────────────────────
+    let mut world = HittableList::new();
+    world.add(Sphere::new(Point3::new( 0.0,  0.0, -1.0),  0.5));   // main sphere
+    world.add(Sphere::new(Point3::new( 0.0, -100.5, -1.0), 100.0)); // ground
 
     // ── PPM output ────────────────────────────────────────────────────────────
-    let file   = File::create("output.ppm").expect("Could not create output.ppm");
+    let file = File::create("output.ppm").expect("Could not create output.ppm");
     let mut out = BufWriter::new(file);
 
     writeln!(out, "P3").unwrap();
     writeln!(out, "{IMAGE_WIDTH} {IMAGE_HEIGHT}").unwrap();
     writeln!(out, "255").unwrap();
 
-    // Rows top → bottom (PPM origin is top-left)
     for j in (0..IMAGE_HEIGHT).rev() {
         eprint!("\rScanlines remaining: {j:4} ");
         for i in 0..IMAGE_WIDTH {
-            let u = i as f64 / (IMAGE_WIDTH  - 1) as f64;
-            let v = j as f64 / (IMAGE_HEIGHT - 1) as f64;
+            let mut color = Color::zero();
 
-            let direction = lower_left + u * horizontal + v * vertical - origin;
-            let ray = Ray::new(origin, direction);
+            for _ in 0..SAMPLES_PER_PIXEL {
+                let u = i as f64 / (IMAGE_WIDTH  - 1) as f64;
+                let v = j as f64 / (IMAGE_HEIGHT - 1) as f64;
+                let ray = camera.get_ray(u, v);
+                color += ray_color(&ray, &world);
+            }
 
-            let color = ray_color(&ray);
+            color = color / SAMPLES_PER_PIXEL as f64;
             let (r, g, b) = color.to_rgb_gamma2();
             writeln!(out, "{r} {g} {b}").unwrap();
         }
