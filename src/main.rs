@@ -28,7 +28,7 @@ use crate::vec3::Point3;
 const ASPECT_RATIO:      f64 = 1.0;
 const IMAGE_WIDTH:       u32 = 600;
 const IMAGE_HEIGHT:      u32 = 600;
-const SAMPLES_PER_PIXEL: u32 = 600;   //raise for cleaner image
+const SAMPLES_PER_PIXEL: u32 = 200;   //raise for cleaner image
 const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
 
 // ── Ray colour ────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ fn build_cornell_box() -> HittableList {
     world.add(Quad::new(
         Point3::new(0.0,   0.0,   0.0),
         Vec3::new(  0.0, 555.0,   0.0),
-        Vec3::new(  0.0,   0.0, 555.0),
+        Vec3::new(  0.0,   0.0, 1555.0),
         Arc::clone(&red),
     ));
 
@@ -86,7 +86,7 @@ fn build_cornell_box() -> HittableList {
     world.add(Quad::new(
         Point3::new(555.0, 555.0,   0.0),
         Vec3::new(    0.0,-555.0,   0.0),
-        Vec3::new(    0.0,   0.0, 555.0),
+        Vec3::new(    0.0,   0.0, 1555.0),
         Arc::clone(&green),
     ));
 
@@ -94,7 +94,7 @@ fn build_cornell_box() -> HittableList {
     world.add(Quad::new(
         Point3::new(  0.0, 0.0,   0.0),
         Vec3::new( 555.0, 0.0,   0.0),
-        Vec3::new(   0.0, 0.0, 555.0),
+        Vec3::new(   0.0, 0.0, 1555.0),
         Arc::clone(&white),
     ));
 
@@ -102,7 +102,7 @@ fn build_cornell_box() -> HittableList {
     world.add(Quad::new(
         Point3::new(555.0, 555.0,   0.0),
         Vec3::new(-555.0,   0.0,   0.0),
-        Vec3::new(   0.0,   0.0, 555.0),
+        Vec3::new(   0.0,   0.0, 1555.0),
         Arc::clone(&white),
     ));
 
@@ -111,14 +111,6 @@ fn build_cornell_box() -> HittableList {
         Point3::new(  0.0,   0.0, 555.0),
         Vec3::new( 555.0,   0.0,   0.0),
         Vec3::new(   0.0, 555.0,   0.0),
-        Arc::clone(&white),
-    ));
-
-    // Front wall — at z=0, facing +Z (closes the box toward the camera)
-    world.add(Quad::new(
-        Point3::new(555.0, 0.0, 0.0),
-        Vec3::new(-555.0, 0.0, 0.0),
-        Vec3::new(  0.0, 555.0, 0.0),
         Arc::clone(&white),
     ));
 
