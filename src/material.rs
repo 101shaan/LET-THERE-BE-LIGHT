@@ -37,7 +37,7 @@ impl Material for Lambertian {
 }
 
 // ── Metal (mirror with optional roughness) ────────────────────────────────────
-
+/*
 pub struct Metal {
     pub albedo: Color,
     /// Fuzz radius [0, 1]. 0 = perfect mirror. 1 = very rough.
@@ -68,9 +68,9 @@ impl Material for Metal {
         }
     }
 }
-
+*/
 // ── Dielectric (glass / refractive) ──────────────────────────────────────────
-
+/*
 pub struct Dielectric {
     /// index of refraction (glass ≈ 1.5, water ≈ 1.33, diamond ≈ 2.4)
     pub ir: f64,
@@ -118,7 +118,7 @@ impl Material for Dielectric {
         Some((Ray::new(rec.point, direction), attenuation))
     }
 }
-
+*/
 pub struct DiffuseLight {
     pub emit: Color,
 }

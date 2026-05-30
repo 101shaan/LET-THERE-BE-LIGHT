@@ -5,9 +5,11 @@ mod hittable;
 mod sphere;
 mod material;
 mod quad;
+mod transform;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
+//use std::num::FpCategory::Zero;
 use std::sync::Arc;
 
 use::rayon::prelude::*;
@@ -17,18 +19,18 @@ use vec3::{Vec3, Color};
 use ray::Ray;
 use camera::Camera;
 use hittable::{Hittable, HittableList};
-use material::{Material, Lambertian, Metal, Dielectric, DiffuseLight};
-use sphere::Sphere;
+use material::{Material, Lambertian, DiffuseLight};
+//use sphere::Sphere;
 use quad::Quad;
-
+use transform::RotateY;
 use crate::vec3::Point3;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ASPECT_RATIO:      f64 = 1.0;
-const IMAGE_WIDTH:       u32 = 600;
-const IMAGE_HEIGHT:      u32 = 600;
-const SAMPLES_PER_PIXEL: u32 = 1000;   //raise for cleaner image
+const IMAGE_WIDTH:       u32 = 400;
+const IMAGE_HEIGHT:      u32 = 400;
+const SAMPLES_PER_PIXEL: u32 = 200;   //raise for cleaner image
 const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
 
 // ── Ray colour ────────────────────────────────────────────────────────────────
@@ -58,6 +60,23 @@ fn ray_color(ray: &Ray, world: &HittableList) -> Color {
     accumulated
 }
 
+fn build_box(
+    world: &mut HittableList,
+    p_min: Point3,
+    p_max: Point3,
+    mat: Arc<dyn Material>,
+) {
+    let (x0, y0, z0) = (p_min.x, p_min.y, p_min.z);
+    let (x1, y1, z1,) = (p_max.x, p_max.y, p_max.z);
+
+    world.add(Quad::new(Point3::new(x0,y0,z1), Vec3::new(x1-x0,0.0,0.0), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // front
+    world.add(Quad::new(Point3::new(x1,y0,z0), Vec3::new(x0-x1,0.0,0.0), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // back
+    world.add(Quad::new(Point3::new(x0,y0,z0), Vec3::new(0.0,0.0,z1-z0), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // left
+    world.add(Quad::new(Point3::new(x1,y0,z1), Vec3::new(0.0,0.0,z0-z1), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // right
+    world.add(Quad::new(Point3::new(x0,y1,z1), Vec3::new(x1-x0,0.0,0.0), Vec3::new(0.0,0.0,z0-z1), Arc::clone(&mat))); // top
+    world.add(Quad::new(Point3::new(x0,y0,z0), Vec3::new(x1-x0,0.0,0.0), Vec3::new(0.0,0.0,z1-z0), Arc::clone(&mat))); // bottom
+}
+
 // ── Cornell 🙃 ─────────────────────────────────────────────────────────
 fn build_cornell_box() -> HittableList {
     let mut world = HittableList::new();
@@ -68,8 +87,8 @@ fn build_cornell_box() -> HittableList {
     let white: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
     let blue: Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.1, 0.2, 0.6)));
     let light: Arc<dyn Material>  = Arc::new(DiffuseLight::new(Color::new(15.0, 15.0, 15.0)));
-    let mirror: Arc<dyn Material> = Arc::new(Metal::new(Color::new(0.8, 0.85, 0.9), 0.0));
-    let glass: Arc<dyn Material>  = Arc::new(Dielectric::new(1.5));
+//  let mirror: Arc<dyn Material> = Arc::new(Metal::new(Color::new(0.8, 0.85, 0.9), 0.0));
+//  let glass: Arc<dyn Material>  = Arc::new(Dielectric::new(1.5));
 
     // ── Walls ─────────────────────────────────────────────────────────────────
     // each Quad: corner point, then two edge vectors
@@ -132,20 +151,25 @@ fn build_cornell_box() -> HittableList {
     ));
 
     // ── Spheres ───────────────────────────────────────────────────────────────
-    // Mirror sphere — left side
-    world.add(Sphere::new(
-        Point3::new(165.0, 130.0, 165.0),
-        130.0,
-        Arc::clone(&mirror),
+    // mirror sphere — left side
+    // tall block — right side
+    world.add(RotateY::new(
+        {
+            let mut tmp = HittableList::new();
+            build_box(&mut tmp, Point3::new(130.0, 0.0, 65.0), Point3::new(295.0, 330.0, 230.0), Arc::clone(&white));
+            tmp
+        },
+        -15.0,
     ));
 
-    // Glass sphere — right side
-    world.add(Sphere::new(
-        Point3::new(390.0, 100.0, 350.0),
-        100.0,
-        Arc::clone(&glass),
-    ));
-
+    world.add(RotateY::new(
+        {
+            let mut tmp = HittableList::new();
+            build_box(&mut tmp, Point3::new(265.0, 0.0, 295.0), Point3::new(430.0, 165.0, 460.0), Arc::clone(&white));
+            tmp
+        },
+        18.0,
+        ));
     world
 }
 
