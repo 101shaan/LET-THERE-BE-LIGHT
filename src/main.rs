@@ -116,10 +116,10 @@ fn build_cornell_box() -> HittableList {
 
     // Front wall — at z=0, facing +Z (closes the box toward the camera)
     world.add(Quad::new(
-    Point3::new(555.0, 0.0, 0.0),
-    Vec3::new(-555.0, 0.0, 0.0),
-    Vec3::new(  0.0, 555.0, 0.0),
-    Arc::clone(&white),
+        Point3::new(555.0, 0.0, 0.0),
+        Vec3::new(-555.0, 0.0, 0.0),
+        Vec3::new(  0.0, 555.0, 0.0),
+        Arc::clone(&white),
     ));
 
     // ── Ceiling light ─────────────────────────────────────────────────────────
