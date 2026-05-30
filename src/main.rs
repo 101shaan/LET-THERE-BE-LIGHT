@@ -28,7 +28,7 @@ use crate::vec3::Point3;
 const ASPECT_RATIO:      f64 = 1.0;
 const IMAGE_WIDTH:       u32 = 600;
 const IMAGE_HEIGHT:      u32 = 600;
-const SAMPLES_PER_PIXEL: u32 = 200;   //raise for cleaner image
+const SAMPLES_PER_PIXEL: u32 = 1000;   //raise for cleaner image
 const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
 
 // ── Ray colour ────────────────────────────────────────────────────────────────
@@ -66,6 +66,7 @@ fn build_cornell_box() -> HittableList {
     let red: Arc<dyn Material>    = Arc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
     let green: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
     let white: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+    let blue: Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.1, 0.2, 0.6)));
     let light: Arc<dyn Material>  = Arc::new(DiffuseLight::new(Color::new(15.0, 15.0, 15.0)));
     let mirror: Arc<dyn Material> = Arc::new(Metal::new(Color::new(0.8, 0.85, 0.9), 0.0));
     let glass: Arc<dyn Material>  = Arc::new(Dielectric::new(1.5));
@@ -76,33 +77,33 @@ fn build_cornell_box() -> HittableList {
 
     // Left wall (red) — at x=0, facing +X
     world.add(Quad::new(
-        Point3::new(0.0,   0.0,   0.0),
+        Point3::new(0.0,   0.0,   -800.0),
         Vec3::new(  0.0, 555.0,   0.0),
-        Vec3::new(  0.0,   0.0, 1555.0),
+        Vec3::new(  0.0,   0.0, 1355.0),
         Arc::clone(&red),
     ));
 
     // Right wall (green) — at x=555, facing -X
     world.add(Quad::new(
-        Point3::new(555.0, 555.0,   0.0),
+        Point3::new(555.0, 555.0,   -800.0),
         Vec3::new(    0.0,-555.0,   0.0),
-        Vec3::new(    0.0,   0.0, 1555.0),
+        Vec3::new(    0.0,   0.0, 1355.0),
         Arc::clone(&green),
     ));
 
     // Floor — at y=0, facing +Y
     world.add(Quad::new(
-        Point3::new(  0.0, 0.0,   0.0),
+        Point3::new(  0.0, 0.0,   -800.0),
         Vec3::new( 555.0, 0.0,   0.0),
-        Vec3::new(   0.0, 0.0, 1555.0),
+        Vec3::new(   0.0, 0.0, 1355.0),
         Arc::clone(&white),
     ));
 
     // Ceiling — at y=555, facing -Y
     world.add(Quad::new(
-        Point3::new(555.0, 555.0,   0.0),
+        Point3::new(555.0, 555.0,   -800.0),
         Vec3::new(-555.0,   0.0,   0.0),
-        Vec3::new(   0.0,   0.0, 1555.0),
+        Vec3::new(   0.0,   0.0, 1355.0),
         Arc::clone(&white),
     ));
 
@@ -112,6 +113,13 @@ fn build_cornell_box() -> HittableList {
         Vec3::new( 555.0,   0.0,   0.0),
         Vec3::new(   0.0, 555.0,   0.0),
         Arc::clone(&white),
+    ));
+
+    world.add(Quad::new(
+        Point3::new(0.0, 0.0, -800.0),
+        Vec3::new(555.0, 0.0, 0.0),
+        Vec3::new(0.0, 555.0, 0.0),
+        Arc::clone(&blue),
     ));
 
     // ── Ceiling light ─────────────────────────────────────────────────────────
