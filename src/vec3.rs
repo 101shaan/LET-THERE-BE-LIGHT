@@ -44,8 +44,8 @@ impl Vec3 {
         self / self.length()
     }
 
-    /// Interpret this Vec3 as an RGB colour and gamma-correct it (gamma = 2.0).
-    /// Then clamp and convert to [0, 255] u8 values.
+    /// interpret this vec3 as an rgb colour then gamma correct it (gamma = 2.0)
+    /// theen clamp and convert to [0, 255] u8 values
     pub fn to_rgb_gamma2(self) -> (u8, u8, u8) {
         let r = self.x.sqrt().clamp(0.0, 1.0);
         let g = self.y.sqrt().clamp(0.0, 1.0);
