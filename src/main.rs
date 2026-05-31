@@ -6,21 +6,22 @@ mod sphere;
 mod material;
 mod quad;
 mod transform;
+mod light;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
-//use std::num::FpCategory::Zero;
 use std::sync::Arc;
 
-use::rayon::prelude::*;
+use rayon::prelude::*;
 use rand::Rng;
+use rand::RngCore;
 
 use vec3::{Vec3, Color};
 use ray::Ray;
 use camera::Camera;
 use hittable::{Hittable, HittableList};
+use light::{Light, LightList};
 use material::{Material, Lambertian, DiffuseLight};
-//use sphere::Sphere;
 use quad::Quad;
 use transform::RotateY;
 use crate::vec3::Point3;
@@ -28,46 +29,121 @@ use crate::vec3::Point3;
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ASPECT_RATIO:      f64 = 1.0;
-const IMAGE_WIDTH:       u32 = 200;
-const IMAGE_HEIGHT:      u32 = 200;
-const SAMPLES_PER_PIXEL: u32 = 200;   //raise for cleaner image
-const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
+const IMAGE_WIDTH:       u32 = 1080;
+const IMAGE_HEIGHT:      u32 = 1080;
+const SAMPLES_PER_PIXEL: u32 = 1000;
+const MAX_DEPTH:         u32 = 50;
 
-// ── Ray colour ────────────────────────────────────────────────────────────────
-// hits → surface normal visualised as RGB (usual thingy debug view).
-// miss  → sky gradient.
+// ── Integrator ────────────────────────────────────────────────────────────────
+//
+// Next Event Estimation (NEE) path integrator.
+//
+// At each diffuse bounce we do two things:
+//
+//   1. Direct (NEE):  sample a point on a light, cast a shadow ray, accumulate
+//      the direct contribution weighted by the BSDF, geometry term, and light PDF.
+//
+//   2. Indirect:  scatter a new ray via the BSDF as usual and continue the path.
+//
+// To avoid double-counting emitted radiance we only add `emitted()` on the very
+// first intersection (camera ray hitting a light directly).  On all subsequent
+// bounces the emitter contribution is handled exclusively through NEE.
+// This is the "direct only on first hit" convention — simple, correct, and
+// debug-friendly before MIS is added.
 
-fn ray_color(ray: &Ray, world: &HittableList) -> Color {
-    let mut current_ray  = *ray;
-    let mut accumulated = Color::zero();
-    let mut attenuation  = Color::one();
+fn ray_color(
+    ray:    &Ray,
+    world:  &HittableList,
+    lights: &LightList,
+    rng:    &mut impl Rng,
+    depth:  u32,
+) -> Color {
+    if depth == 0 { return Color::zero(); }
 
-    for _ in 0..MAX_DEPTH {
-        if let Some(rec) = world.hit(&current_ray, 0.001, f64::INFINITY) {
-            accumulated = accumulated + attenuation * rec.material.emitted();
+    let rec = match world.hit(ray, 0.001, f64::INFINITY) {
+        None      => return Color::zero(),
+        Some(rec) => rec,
+    };
 
-            if let Some((scattered, albedo)) = rec.material.scatter(&current_ray, &rec){
-                attenuation = attenuation * albedo;
-                current_ray = scattered;
-            } else {
-                break;
-            }
+    // Light hit — return emission directly (camera ray seeing the quad).
+    // Bounce rays never reach here because ray_color_bounce zeros emission.
+    let (scattered, albedo) = match rec.material.scatter(ray, &rec) {
+        None         => return rec.material.emitted(),
+        Some(result) => result,
+    };
+
+    // NEE: sample a light, cast shadow ray, accumulate direct contribution.
+    let direct = if let Some(ls) = lights.sample(rec.point, rng) {
+        let cos_surface = rec.normal.dot(ls.direction);
+        let shadow_ray  = Ray::new(rec.point, ls.direction);
+        let in_shadow   = world.hit(&shadow_ray, 0.001, ls.distance - 1e-4).is_some();
+        if !in_shadow && cos_surface > 0.0 {
+            albedo * ls.emission * (cos_surface / ls.pdf)
         } else {
-            break;
+            Color::zero()
         }
-    }
+    } else {
+        Color::zero()
+    };
 
-    accumulated
+    // Indirect: scatter and recurse, but suppress emitted() on light hits
+    // to avoid double-counting what NEE already paid for.
+    let indirect = albedo * ray_color_bounce(&scattered, world, lights, rng, depth - 1);
+
+    direct + indirect
 }
+
+// Identical to ray_color but returns black when scatter() returns None.
+// Used for indirect bounces so that a bounce ray landing on the light
+// doesn't add emitted() on top of what NEE already contributed.
+fn ray_color_bounce(
+    ray:    &Ray,
+    world:  &HittableList,
+    lights: &LightList,
+    rng:    &mut impl Rng,
+    depth:  u32,
+) -> Color {
+    if depth == 0 { return Color::zero(); }
+
+    let rec = match world.hit(ray, 0.001, f64::INFINITY) {
+        None      => return Color::zero(),
+        Some(rec) => rec,
+    };
+
+    // Hit a light on a bounce — return black, NEE already counted this.
+    let (scattered, albedo) = match rec.material.scatter(ray, &rec) {
+        None         => return Color::zero(),
+        Some(result) => result,
+    };
+
+    let direct = if let Some(ls) = lights.sample(rec.point, rng) {
+        let cos_surface = rec.normal.dot(ls.direction);
+        let shadow_ray  = Ray::new(rec.point, ls.direction);
+        let in_shadow   = world.hit(&shadow_ray, 0.001, ls.distance - 1e-4).is_some();
+        if !in_shadow && cos_surface > 0.0 {
+            albedo * ls.emission * (cos_surface / ls.pdf)
+        } else {
+            Color::zero()
+        }
+    } else {
+        Color::zero()
+    };
+
+    let indirect = albedo * ray_color_bounce(&scattered, world, lights, rng, depth - 1);
+
+    direct + indirect
+}
+
+// ── Scene geometry ────────────────────────────────────────────────────────────
 
 fn build_box(
     world: &mut HittableList,
     p_min: Point3,
     p_max: Point3,
-    mat: Arc<dyn Material>,
+    mat:   Arc<dyn Material>,
 ) {
     let (x0, y0, z0) = (p_min.x, p_min.y, p_min.z);
-    let (x1, y1, z1,) = (p_max.x, p_max.y, p_max.z);
+    let (x1, y1, z1) = (p_max.x, p_max.y, p_max.z);
 
     world.add(Quad::new(Point3::new(x0,y0,z1), Vec3::new(x1-x0,0.0,0.0), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // front
     world.add(Quad::new(Point3::new(x1,y0,z0), Vec3::new(x0-x1,0.0,0.0), Vec3::new(0.0,y1-y0,0.0), Arc::clone(&mat))); // back
@@ -77,56 +153,56 @@ fn build_box(
     world.add(Quad::new(Point3::new(x0,y0,z0), Vec3::new(x1-x0,0.0,0.0), Vec3::new(0.0,0.0,z1-z0), Arc::clone(&mat))); // bottom
 }
 
-// ── Cornell 🙃 ─────────────────────────────────────────────────────────
-fn build_cornell_box() -> HittableList {
-    let mut world = HittableList::new();
+// Returns both the hittable world and the light list.
+// The ceiling light quad is added to both: world (so shadow rays can hit it)
+// and lights (so NEE can sample it).  The light list only holds emitters —
+// no wall geometry.
+fn build_cornell_box() -> (HittableList, LightList) {
+    let mut world  = HittableList::new();
+    let mut lights = LightList::new();
 
     // ── Materials ─────────────────────────────────────────────────────────────
-    let red: Arc<dyn Material>    = Arc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
-    let green: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
-    let white: Arc<dyn Material>  = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
-    let blue: Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.1, 0.2, 0.6)));
-    let light: Arc<dyn Material>  = Arc::new(DiffuseLight::new(Color::new(15.0, 15.0, 15.0)));
-//  let mirror: Arc<dyn Material> = Arc::new(Metal::new(Color::new(0.8, 0.85, 0.9), 0.0));
-//  let glass: Arc<dyn Material>  = Arc::new(Dielectric::new(1.5));
+    let red:   Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
+    let green: Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
+    let white: Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+    let blue:  Arc<dyn Material> = Arc::new(Lambertian::new(Color::new(0.1,  0.2,  0.6)));
+    let light: Arc<dyn Material> = Arc::new(DiffuseLight::new(Color::new(4.0, 4.0, 4.0)));
 
     // ── Walls ─────────────────────────────────────────────────────────────────
-    // each Quad: corner point, then two edge vectors
-    // the box spans x∈[0,555], y∈[0,555], z∈[0,555]
 
-    // Left wall (red) — at x=0, facing +X
+    // Left wall (red)
     world.add(Quad::new(
         Point3::new(0.0,   0.0,   -800.0),
-        Vec3::new(  0.0, 555.0,   0.0),
+        Vec3::new(  0.0, 555.0,    0.0),
         Vec3::new(  0.0,   0.0, 1355.0),
         Arc::clone(&red),
     ));
 
-    // Right wall (green) — at x=555, facing -X
+    // Right wall (green)
     world.add(Quad::new(
         Point3::new(555.0, 555.0,   -800.0),
-        Vec3::new(    0.0,-555.0,   0.0),
+        Vec3::new(    0.0,-555.0,    0.0),
         Vec3::new(    0.0,   0.0, 1355.0),
         Arc::clone(&green),
     ));
 
-    // Floor — at y=0, facing +Y
+    // Floor
     world.add(Quad::new(
         Point3::new(  0.0, 0.0,   -800.0),
-        Vec3::new( 555.0, 0.0,   0.0),
+        Vec3::new( 555.0, 0.0,    0.0),
         Vec3::new(   0.0, 0.0, 1355.0),
         Arc::clone(&white),
     ));
 
-    // Ceiling — at y=555, facing -Y
+    // Ceiling
     world.add(Quad::new(
         Point3::new(555.0, 555.0,   -800.0),
-        Vec3::new(-555.0,   0.0,   0.0),
+        Vec3::new(-555.0,   0.0,    0.0),
         Vec3::new(   0.0,   0.0, 1355.0),
         Arc::clone(&white),
     ));
 
-    // Back wall — at z=555, facing -Z
+    // Back wall
     world.add(Quad::new(
         Point3::new(  0.0,   0.0, 555.0),
         Vec3::new( 555.0,   0.0,   0.0),
@@ -134,61 +210,79 @@ fn build_cornell_box() -> HittableList {
         Arc::clone(&white),
     ));
 
+    // Front wall (blue, behind camera)
     world.add(Quad::new(
-        Point3::new(0.0, 0.0, -800.0),
-        Vec3::new(555.0, 0.0, 0.0),
-        Vec3::new(0.0, 555.0, 0.0),
+        Point3::new(0.0,   0.0, -800.0),
+        Vec3::new(555.0,   0.0,    0.0),
+        Vec3::new(  0.0, 555.0,    0.0),
         Arc::clone(&blue),
     ));
 
     // ── Ceiling light ─────────────────────────────────────────────────────────
-    // Centred at x∈[183,373], z∈[127,432] — roughly the classic Cornell proportions.
-    world.add(Quad::new(
+    // Added to both world and lights.
+    // The Quad is constructed identically in both so NEE samples the same
+    // geometry that the ray tracer can intersect.
+    let light_quad = Arc::new(Quad::new(
         Point3::new(183.0, 554.0, 127.0),
         Vec3::new( 190.0,   0.0,   0.0),
         Vec3::new(   0.0,   0.0, 305.0),
         Arc::clone(&light),
     ));
 
-    // ── Spheres ───────────────────────────────────────────────────────────────
-    // TALL box — back right, rotated -18°
+    world.add(Quad::new(
+        Point3::new(183.0, 554.0, 127.0),
+        Vec3::new( 190.0,   0.0,   0.0),
+        Vec3::new(   0.0,   0.0, 305.0),
+        Arc::clone(&light),
+    ));
+    lights.add(light_quad as Arc<dyn Light>);
+
+    // ── Boxes ─────────────────────────────────────────────────────────────────
+
+    // Tall box — back right, rotated -18°
     world.add(RotateY::new(
         {
             let mut tmp = HittableList::new();
-            build_box(&mut tmp, Point3::new(170.0, 0.0, 330.0), Point3::new(330.0, 330.0, 470.0), Arc::clone(&white));
+            build_box(&mut tmp,
+                Point3::new(170.0, 0.0, 330.0),
+                Point3::new(330.0, 330.0, 470.0),
+                Arc::clone(&white));
             tmp
         },
         -18.0,
     ));
 
-    // SHORT box — front left, rotated 25°
+    // Short box — front left, rotated 25°
     world.add(RotateY::new(
         {
             let mut tmp = HittableList::new();
-            build_box(&mut tmp, Point3::new(150.0, 0.0, -40.0), Point3::new(310.0, 165.0, 80.0), Arc::clone(&white));
+            build_box(&mut tmp,
+                Point3::new(150.0, 0.0, -40.0),
+                Point3::new(310.0, 165.0, 80.0),
+                Arc::clone(&white));
             tmp
         },
         25.0,
     ));
-    world
+
+    (world, lights)
 }
 
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
-    // Camera positioned to look straight down the -Z axis into the box.
-    // lookfrom z=1344 is derived from: tan(FOV/2) = 277.5 / (z - 277.5) → FOV=40°
     let camera = Camera::new(
-        Point3::new(277.5, 277.5, -800.0),  // lookfrom — in front of the open face
-        Point3::new(277.5, 277.5,  555.0),  // lookat   — centre of back wall
-        Vec3::new(  0.0,   1.0,    0.0),    // vup
-        40.0,                                // vfov
+        Point3::new(277.5, 277.5, -800.0),
+        Point3::new(277.5, 277.5,  555.0),
+        Vec3::new(  0.0,   1.0,    0.0),
+        40.0,
         ASPECT_RATIO,
     );
 
-    let world = build_cornell_box();
+    let (world, lights) = build_cornell_box();
 
     eprintln!(
-        "Rendering {}×{} at {} spp...",
+        "Rendering {}×{} at {} spp (NEE)...",
         IMAGE_WIDTH, IMAGE_HEIGHT, SAMPLES_PER_PIXEL
     );
 
@@ -196,14 +290,14 @@ fn main() {
         .into_par_iter()
         .rev()
         .map(|j| {
-            let mut r = rand::thread_rng();
+            let mut rng = rand::thread_rng();
             (0..IMAGE_WIDTH).map(|i| {
                 let mut pixel = Color::zero();
                 for _ in 0..SAMPLES_PER_PIXEL {
-                    let u = (i as f64 + r.gen::<f64>()) / (IMAGE_WIDTH  - 1) as f64;
-                    let v = (j as f64 + r.gen::<f64>()) / (IMAGE_HEIGHT - 1) as f64;
+                    let u   = (i as f64 + rng.gen::<f64>()) / (IMAGE_WIDTH  - 1) as f64;
+                    let v   = (j as f64 + rng.gen::<f64>()) / (IMAGE_HEIGHT - 1) as f64;
                     let ray = camera.get_ray(u, v);
-                    pixel += ray_color(&ray, &world);
+                    pixel  += ray_color(&ray, &world, &lights, &mut rng, MAX_DEPTH);
                 }
                 pixel / SAMPLES_PER_PIXEL as f64
             }).collect()
