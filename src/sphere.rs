@@ -9,13 +9,13 @@ pub struct Sphere {
     pub radius:   f64,
     pub material: Arc<dyn Material>,   // ← NEW
 }
-
+/*
 impl Sphere {
     pub fn new(center: Point3, radius: f64, material: Arc<dyn Material>) -> Self {
         Self { center, radius, material }
     }
 }
-
+*/
 impl Hittable for Sphere {
     fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
         let oc = ray.origin - self.center;

@@ -28,8 +28,8 @@ use crate::vec3::Point3;
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ASPECT_RATIO:      f64 = 1.0;
-const IMAGE_WIDTH:       u32 = 400;
-const IMAGE_HEIGHT:      u32 = 400;
+const IMAGE_WIDTH:       u32 = 200;
+const IMAGE_HEIGHT:      u32 = 200;
 const SAMPLES_PER_PIXEL: u32 = 200;   //raise for cleaner image
 const MAX_DEPTH:         u32 = 50;    // max ray bounces before forcing black
 
@@ -151,25 +151,25 @@ fn build_cornell_box() -> HittableList {
     ));
 
     // ── Spheres ───────────────────────────────────────────────────────────────
-    // mirror sphere — left side
-    // tall block — right side
+    // TALL box — back right, rotated -18°
     world.add(RotateY::new(
         {
             let mut tmp = HittableList::new();
-            build_box(&mut tmp, Point3::new(130.0, 0.0, 65.0), Point3::new(295.0, 330.0, 230.0), Arc::clone(&white));
+            build_box(&mut tmp, Point3::new(170.0, 0.0, 330.0), Point3::new(330.0, 330.0, 470.0), Arc::clone(&white));
             tmp
         },
-        -15.0,
+        -18.0,
     ));
 
+    // SHORT box — front left, rotated 25°
     world.add(RotateY::new(
         {
             let mut tmp = HittableList::new();
-            build_box(&mut tmp, Point3::new(265.0, 0.0, 295.0), Point3::new(430.0, 165.0, 460.0), Arc::clone(&white));
+            build_box(&mut tmp, Point3::new(150.0, 0.0, -40.0), Point3::new(310.0, 165.0, 80.0), Arc::clone(&white));
             tmp
         },
-        18.0,
-        ));
+        25.0,
+    ));
     world
 }
 
