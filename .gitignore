@@ -2,3 +2,4 @@
 Cargo.lock
 output.ppm
 .gitignore
+renders
